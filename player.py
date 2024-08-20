@@ -1,4 +1,3 @@
-import gpiod
 import av
 import cv2
 import numpy as np
@@ -6,151 +5,150 @@ import wave
 import subprocess
 import os
 import time
-import logging
+import gpiod
+from datetime import datetime
 from ffpyplayer.player import MediaPlayer
-
-# 定义GPIO芯片和引脚号
-chip_name = "gpiochip6"
-line_offset = 0  # GPIO6_A0 (IO1)
-debounce_time = 0.05  # 去抖动时间（秒）
-lockout_time = 1  # 状态锁定时间（秒）
 
 # RTMP流的URL
 rtmp_url = 'rtsp://admin:tfe123456@10.168.1.66/media/video1/multicast'
 # 保存文件的路径
 output_dir = '/home/monster/Desktop/share/DCIM/'
 
-# 设置日志记录
-logging.basicConfig(level=logging.INFO)
+# 合成文件的保存路径
+merge_output_dir = '/home/monster/Desktop/share/DCIM/hc/'
+
+# GPIO配置
+chip_name = "gpiochip6"
+line_offset = 0  # GPIO6_A0 (IO1)
+debounce_time = 0.05  # 去抖动时间（秒）
+lockout_time = 1  # 状态锁定时间（秒）
 
 # 确保输出目录存在
 os.makedirs(output_dir, exist_ok=True)
+os.makedirs(merge_output_dir, exist_ok=True)
 
 def open_container_and_streams(rtmp_url):
     container = av.open(rtmp_url)
     video_stream = next((s for s in container.streams if s.type == 'video'), None)
     audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+
     if video_stream is None or audio_stream is None:
         raise ValueError("No video or audio stream found in the container.")
+
     return container, video_stream, audio_stream
 
 def initialize_audio_player(audio_stream):
-    return MediaPlayer(rtmp_url, ff_opts={'vn': True})  # `vn`:视频禁用，只有音频
-
-def check_gpio_state(line):
-    initial_value = line.get_value()
-    time.sleep(debounce_time)  # 去抖动
-    final_value = line.get_value()
-    if initial_value == final_value:
-        return final_value
-    else:
-        return None  # 状态不稳定，返回None
+    return MediaPlayer(rtmp_url, ff_opts={'vn': True})  # `vn`: video disabled, only audio
 
 def start_recording_video_and_audio():
+    # 初始化GPIO
+    chip = gpiod.Chip(chip_name)
+    line = chip.get_line(line_offset)
+    
+    # 请求GPIO线的输入模式
+    line.request(consumer="record_toggle", type=gpiod.LINE_REQ_DIR_IN)
+    
+    last_state = False
+    last_change_time = time.time() - lockout_time
+    recording = False
+    video_writer = None
+    video_output_file = os.path.join(output_dir, 'output_video.mp4')
+    audio_output_file = os.path.join(output_dir, 'output_audio.wav')
+    fourcc = cv2.VideoWriter_fourcc(*'H264')
+    frame_rate = 25
+
     try:
-        # 获取音视频流
         container, video_stream, audio_stream = open_container_and_streams(rtmp_url)
-
-        # 显示窗口
         cv2.namedWindow('Video Frame', cv2.WINDOW_NORMAL)
-
-        # 初始化音频播放器
         audio_player = initialize_audio_player(audio_stream)
-        
-        # 录制的WAV文件
-        audio_output_file = os.path.join(output_dir, 'output_audio.wav')
         wave_file = wave.open(audio_output_file, 'wb')
         wave_file.setnchannels(1)
         wave_file.setsampwidth(2)  # 16-bit samples
-        wave_file.setframerate(16000)  # 采样率16kHz
+        wave_file.setframerate(16000)  # 使用原始采样率16kHz
 
-        # 初始化视频录制变量
-        recording = False
-        video_writer = None
-        video_output_file = os.path.join(output_dir, 'output_video.mp4')
-        fourcc = cv2.VideoWriter_fourcc(*'H264')
-        frame_rate = 25
-        last_signal_time = 0  # 记录上次信号时间
-
-        # GPIO线程
-        chip = gpiod.Chip(chip_name)
-        line = chip.get_line(line_offset)
-        line.request(consumer="gpio_reader", type=gpiod.LINE_REQ_DIR_IN)
-
-        # 处理音视频流
         for packet in container.demux(video_stream, audio_stream):
             try:
+                # GPIO 高电平检测
+                current_state = line.get_value()
+                if current_state and not last_state:
+                    current_time = time.time()
+                    if current_time - last_change_time > debounce_time:
+                        recording = not recording
+                        last_change_time = current_time
+
+                        if recording:
+                            print("录制已开始")
+                        else:
+                            if video_writer is not None:
+                                video_writer.release()
+                                video_writer = None
+                                wave_file.close()  # 停止音频录制
+                                print(f"录制已停止，视频已保存到 {video_output_file}")
+                                print(f"音频已保存到 {audio_output_file}")
+
+                                # 合成音视频并添加时间戳
+                                merge_audio_video(video_output_file, audio_output_file, merge_output_dir)
+                                return
+
+                last_state = current_state
+
                 if packet.stream.type == 'video':
                     for frame in packet.decode():
                         img = frame.to_ndarray(format='bgr24')
                         cv2.imshow('Video Frame', img)
 
-                        # 检查GPIO状态
-                        gpio_value = check_gpio_state(line)
-                        current_time = time.time()
-
-                        if gpio_value is not None and gpio_value == 1 and (current_time - last_signal_time > lockout_time):
-                            last_signal_time = current_time
-                            if not recording:
-                                recording = True
-                                video_writer = cv2.VideoWriter(video_output_file, fourcc, frame_rate, (img.shape[1], img.shape[0]))
-                                start_time = time.time()  # 记录录制开始时间
-                                logging.info("录制已开始")
-                            else:
-                                recording = False
-                                if video_writer is not None:
-                                    video_writer.release()
-                                    video_writer = None
-                                    wave_file.close()  # 停止音频录制
-                                    logging.info(f"录制已停止，视频已保存到 {video_output_file}")
-                                    logging.info(f"音频已保存到 {audio_output_file}")
-
-                                    # 合成音视频
-                                    merge_audio_video(video_output_file, audio_output_file, output_dir)
-                                    return
-
                         if recording:
+                            if video_writer is None:
+                                video_writer = cv2.VideoWriter(video_output_file, fourcc, frame_rate, (img.shape[1], img.shape[0]))
                             video_writer.write(img)
 
-                        key = cv2.waitKey(1) & 0xFF
-                        if key == ord('q'):
-                            break
+                        cv2.waitKey(1)  # 处理视频流时避免窗口卡死
 
                 elif packet.stream.type == 'audio':
                     for frame in packet.decode():
                         if recording:
-                            audio_data = frame.to_ndarray().astype(np.int16)  # 强制转换为16-bit
+                            audio_data = frame.to_ndarray().astype(np.int16)
                             audio_player.get_frame()  # 同步播放音频
                             wave_file.writeframes(audio_data.tobytes())
 
             except av.AVError as e:
-                logging.error(f"Error decoding packet: {e}")
+                print(f"Error decoding packet: {e}")
 
     finally:
         cv2.destroyAllWindows()
-        if 'video_writer' in locals() and video_writer is not None:
+        if video_writer is not None:
             video_writer.release()
         if 'container' in locals():
             container.close()
 
 def merge_audio_video(video_file, audio_file, output_dir):
+    # 获取当前时间并转义 ":" 字符
+    current_time = datetime.now().strftime("%Y-%m-%d %H\\:%M\\:%S")
     output_file = os.path.join(output_dir, 'final_output.mp4')
+    
     command = [
         'ffmpeg',
-        '-y',               # 覆盖现有文件
+        '-y',  # 覆盖现有文件
         '-i', video_file,
         '-i', audio_file,
-        '-c:v', 'copy',
+        '-vf', f"drawtext=text='{current_time}':fontcolor=white:fontsize=24:x=(w-text_w-10):y=(h-text_h-10)",
+        '-c:v', 'libx264',  # 使用libx264编码器进行压缩
         '-c:a', 'aac',
         '-strict', 'experimental',
         output_file
     ]
+
     try:
         result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logging.info(f"最终视频已保存到 {output_file}")
-        logging.info(f"ffmpeg output: {result.stdout.decode()}")
+        print(f"最终视频已保存到 {output_file}")
+        print(f"ffmpeg output: {result.stdout.decode()}")
+
+        # 删除原始的音频和视频文件
+        os.remove(video_file)
+        os.remove(audio_file)
+        print(f"已删除原始视频文件 {video_file} 和音频文件 {audio_file}")
     except subprocess.CalledProcessError as e:
-        logging.error(f"Error during ffmpeg execution: {e.stderr.decode()}")
+        print(f"Error during ffmpeg execution: {e.stderr.decode()}")
 
 if __name__ == "__main__":
     start_recording_video_and_audio()
