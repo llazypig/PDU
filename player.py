@@ -64,7 +64,7 @@ def start_recording_video_and_audio():
         wave_file.setsampwidth(2)  # 16-bit samples
         wave_file.setframerate(16000)  # 采样率16kHz
 
-        # 初始化视频录制的相关变量
+        # 初始化视频录制变量
         recording = False
         video_writer = None
         video_output_file = os.path.join(output_dir, 'output_video.mp4')
@@ -72,7 +72,7 @@ def start_recording_video_and_audio():
         frame_rate = 25
         last_signal_time = 0  # 记录上次信号时间
 
-        # GPIO 芯片并获取线
+        # GPIO线程
         chip = gpiod.Chip(chip_name)
         line = chip.get_line(line_offset)
         line.request(consumer="gpio_reader", type=gpiod.LINE_REQ_DIR_IN)
