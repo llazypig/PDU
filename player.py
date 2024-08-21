@@ -11,11 +11,10 @@ from ffpyplayer.player import MediaPlayer
 
 # RTMP流的URL
 rtmp_url = 'rtsp://admin:tfe123456@10.168.1.66/media/video1/multicast'
-# 保存文件的路径
-output_dir = '/home/monster/Desktop/share/DCIM/'
-
-# 合成文件的保存路径
-merge_output_dir = '/home/monster/Desktop/share/DCIM/hc/'
+# 保存录制文件的路径
+recording_output_dir = '/home/monster/Desktop/share/DCIM/yp/'
+# 保存合成文件的路径
+merged_output_dir = '/home/monster/Desktop/share/DCIM/hc/'
 
 # GPIO配置
 chip_name = "gpiochip6"
@@ -24,8 +23,8 @@ debounce_time = 0.05  # 去抖动时间（秒）
 lockout_time = 1  # 状态锁定时间（秒）
 
 # 确保输出目录存在
-os.makedirs(output_dir, exist_ok=True)
-os.makedirs(merge_output_dir, exist_ok=True)
+os.makedirs(recording_output_dir, exist_ok=True)
+os.makedirs(merged_output_dir, exist_ok=True)
 
 def open_container_and_streams(rtmp_url):
     container = av.open(rtmp_url)
@@ -52,8 +51,8 @@ def start_recording_video_and_audio():
     last_change_time = time.time() - lockout_time
     recording = False
     video_writer = None
-    video_output_file = os.path.join(output_dir, 'output_video.mp4')
-    audio_output_file = os.path.join(output_dir, 'output_audio.wav')
+    video_output_file = os.path.join(recording_output_dir, 'output_video.mp4')
+    audio_output_file = os.path.join(recording_output_dir, 'output_audio.wav')
     fourcc = cv2.VideoWriter_fourcc(*'H264')
     frame_rate = 25
 
@@ -86,8 +85,8 @@ def start_recording_video_and_audio():
                                 print(f"录制已停止，视频已保存到 {video_output_file}")
                                 print(f"音频已保存到 {audio_output_file}")
 
-                                # 合成音视频并添加时间戳
-                                merge_audio_video(video_output_file, audio_output_file, merge_output_dir)
+                                # 合成音视频并保存到指定目录
+                                merge_audio_video(video_output_file, audio_output_file, merged_output_dir)
                                 return
 
                 last_state = current_state
@@ -122,16 +121,17 @@ def start_recording_video_and_audio():
             container.close()
 
 def merge_audio_video(video_file, audio_file, output_dir):
-    # 获取当前时间并转义 ":" 字符
-    current_time = datetime.now().strftime("%Y-%m-%d %H\\:%M\\:%S")
-    output_file = os.path.join(output_dir, 'final_output.mp4')
+    # 获取当前时间，并格式化为文件名
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H\\:%M\\:%S")
+    current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_file = os.path.join(output_dir, f"{current_time_filename}.mp4")
     
     command = [
         'ffmpeg',
         '-y',  # 覆盖现有文件
         '-i', video_file,
         '-i', audio_file,
-        '-vf', f"drawtext=text='{current_time}':fontcolor=white:fontsize=24:x=(w-text_w-10):y=(h-text_h-10)",
+        '-vf', f"drawtext=text='{current_time_str}':fontcolor=white:fontsize=24:x=(w-text_w-10):y=(h-text_h-10)",
         '-c:v', 'libx264',  # 使用libx264编码器进行压缩
         '-c:a', 'aac',
         '-strict', 'experimental',
@@ -143,10 +143,6 @@ def merge_audio_video(video_file, audio_file, output_dir):
         print(f"最终视频已保存到 {output_file}")
         print(f"ffmpeg output: {result.stdout.decode()}")
 
-        # 删除原始的音频和视频文件
-        os.remove(video_file)
-        os.remove(audio_file)
-        print(f"已删除原始视频文件 {video_file} 和音频文件 {audio_file}")
     except subprocess.CalledProcessError as e:
         print(f"Error during ffmpeg execution: {e.stderr.decode()}")
 
