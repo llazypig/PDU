@@ -4,14 +4,14 @@ import oss2
 from tqdm import tqdm
 
 # 本地文件夹路径目录
-basedir = '/home/monster/Desktop/share/DCIM/hc'
-# 阿里云存储目录，要保证和下面的project_name相同
-projectList = ['b-cctv/']
+basedir_hc = '/home/monster/Desktop/share/DCIM/hc'
+basedir_hcz = '/home/monster/Desktop/share/DCIM/hcz'
+# 阿里云存储目录
+projectList = ['A-cctv/', 'B-cctv/']
 # 本地文件夹
-dirList = [basedir]
+dirList = [basedir_hc, basedir_hcz]
 
 bucket = 'stt-cctv'  # 设置为你的存储桶名称
-ossDir = 'b-cctv/'  # 替换为你实际的目录
 # 将accessKeyId 和 accessKeySecret替换自己的
 ossAuth = oss2.Auth('yourAccessKeyId', 'yourAccessKeySecret')
 # 使用正确的端点
@@ -65,8 +65,9 @@ def listFile(dir):
 
 if __name__ == '__main__':
     # 填写oss的存储路径
-    project_name = 'b-cctv/'
+    project_names = ['A-cctv/', 'B-cctv/']
     while True:
-        uploadFile2Oss(project_name)
+        for project_name in project_names:
+            uploadFile2Oss(project_name)
         # 每隔60秒检查一次
         time.sleep(60)
