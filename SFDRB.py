@@ -1,5 +1,7 @@
 import cv2
 import os
+import gpiod
+import time
 
 # 设置输出目录和RTSP URL
 merged_output_dir = '/home/monster/Desktop/share/DCIM/hc/'
@@ -16,13 +18,27 @@ cap = cv2.VideoCapture(rtmp_url)
 frame_width = int(cap.get(3))
 frame_height = int(cap.get(4))
 
-# 定义编解码器并创建VideoWriter对象
+# 定义编解码器
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-out = cv2.VideoWriter(os.path.join(merged_output_dir, 'output.avi'), fourcc, 20.0, (frame_width, frame_height))
+out = None
 
 # 读取第一帧
 ret, prev_frame = cap.read()
 prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
+
+recording = False
+
+# GPIO配置
+chip_name = "gpiochip6"
+line_offset = 1  # GPIO6_A1 (IO2)
+debounce_time = 0.05  # 去抖动时间（秒）
+lockout_time = 1  # 状态锁定时间（秒）
+
+chip = gpiod.Chip(chip_name)
+line = chip.get_line(line_offset)
+line.request(consumer="record_toggle", type=gpiod.LINE_REQ_DIR_IN)
+
+last_toggle_time = 0
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -40,7 +56,7 @@ while cap.isOpened():
     change = cv2.countNonZero(thresh)
 
     # 如果变化超过一定阈值，则认为有变化
-    if change > 5000:
+    if change > 5000 and recording:
         out.write(frame)
 
     # 更新前一帧
@@ -49,9 +65,18 @@ while cap.isOpened():
     # 显示当前帧
     cv2.imshow('frame', frame)
 
-    # 按'r'键启动录制
-    if cv2.waitKey(1) & 0xFF == ord('r'):
-        out.write(frame)
+    # 检测GPIO高电平
+    if line.get_value() == 1 and (time.time() - last_toggle_time) > lockout_time:
+        last_toggle_time = time.time()
+        if not recording:
+            out = cv2.VideoWriter(os.path.join(merged_output_dir, 'output.avi'), fourcc, 20.0, (frame_width, frame_height))
+            recording = True
+            print("开始录制")
+        else:
+            recording = False
+            out.release()
+            out = None
+            print("停止录制")
 
     # 按'q'键退出
     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -59,5 +84,6 @@ while cap.isOpened():
 
 # 释放资源
 cap.release()
-out.release()
+if out:
+    out.release()
 cv2.destroyAllWindows()
