@@ -2,6 +2,8 @@ import cv2
 import os
 import gpiod
 import time
+from datetime import datetime
+from ffpyplayer.player import MediaPlayer
 
 # 设置输出目录和RTSP URL
 merged_output_dir = '/home/monster/Desktop/share/DCIM/hc/'
@@ -30,7 +32,7 @@ recording = False
 
 # GPIO配置
 chip_name = "gpiochip6"
-line_offset = 1  # GPIO6_A1 (IO2)
+line_offset = 0  # GPIO6_A0 (IO1)
 debounce_time = 0.05  # 去抖动时间（秒）
 lockout_time = 1  # 状态锁定时间（秒）
 
@@ -39,6 +41,19 @@ line = chip.get_line(line_offset)
 line.request(consumer="record_toggle", type=gpiod.LINE_REQ_DIR_IN)
 
 last_toggle_time = 0
+
+def merge_audio_video(video_file, audio_file, output_dir):
+    current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_file = os.path.join(output_dir, f"{current_time_filename}.mp4")
+    video_clip = VideoFileClip(video_file)
+    audio_clip = AudioFileClip(audio_file)
+    final_clip = video_clip.set_audio(audio_clip)
+    final_clip.write_videofile(output_file, codec='libx264', audio_codec='aac')
+    print(f"合并后的文件已保存到: {output_file}")
+
+def get_audio_frame(player):
+    audio_frame, val = player.get_frame()
+    return audio_frame, val
 
 while cap.isOpened():
     ret, frame = cap.read()
@@ -69,7 +84,9 @@ while cap.isOpened():
     if line.get_value() == 1 and (time.time() - last_toggle_time) > lockout_time:
         last_toggle_time = time.time()
         if not recording:
-            out = cv2.VideoWriter(os.path.join(merged_output_dir, 'output.avi'), fourcc, 20.0, (frame_width, frame_height))
+            current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            video_path = os.path.join(merged_output_dir, f"{current_time_filename}.avi")
+            out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
             recording = True
             print("开始录制")
         else:
