@@ -47,7 +47,7 @@ def start_recording_video_and_audio():
     # 请求GPIO线的输入模式
     line.request(consumer="record_toggle", type=gpiod.LINE_REQ_DIR_IN)
     
-    last_state = False
+    last_state = True  # 初始化为高电平（1）
     last_change_time = time.time() - lockout_time
     recording = False
     video_writer = None
@@ -67,9 +67,9 @@ def start_recording_video_and_audio():
 
         for packet in container.demux(video_stream, audio_stream):
             try:
-                # GPIO 高电平检测
+                # GPIO 低电平（0）检测
                 current_state = line.get_value()
-                if current_state and not last_state:
+                if current_state == 0 and last_state == 1:
                     current_time = time.time()
                     if current_time - last_change_time > debounce_time:
                         recording = not recording
@@ -91,24 +91,22 @@ def start_recording_video_and_audio():
 
                 last_state = current_state
 
-                if packet.stream.type == 'video':
+                if recording and packet.stream.type == 'video':
                     for frame in packet.decode():
                         img = frame.to_ndarray(format='bgr24')
                         cv2.imshow('Video Frame', img)
 
-                        if recording:
-                            if video_writer is None:
-                                video_writer = cv2.VideoWriter(video_output_file, fourcc, frame_rate, (img.shape[1], img.shape[0]))
-                            video_writer.write(img)
+                        if video_writer is None:
+                            video_writer = cv2.VideoWriter(video_output_file, fourcc, frame_rate, (img.shape[1], img.shape[0]))
+                        video_writer.write(img)
 
                         cv2.waitKey(1)  # 处理视频流时避免窗口卡死
 
-                elif packet.stream.type == 'audio':
+                elif recording and packet.stream.type == 'audio':
                     for frame in packet.decode():
-                        if recording:
-                            audio_data = frame.to_ndarray().astype(np.int16)
-                            audio_player.get_frame()  # 同步播放音频
-                            wave_file.writeframes(audio_data.tobytes())
+                        audio_data = frame.to_ndarray().astype(np.int16)
+                        audio_player.get_frame()  # 同步播放音频
+                        wave_file.writeframes(audio_data.tobytes())
 
             except av.AVError as e:
                 print(f"Error decoding packet: {e}")
