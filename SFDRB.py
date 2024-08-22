@@ -8,7 +8,7 @@ from datetime import datetime
 merged_output_dir = '/home/monster/Desktop/share/DCIM/hcz/'
 rtmp_url = 'rtsp://admin:tfe123456@10.168.1.66/media/video1/multicast'
 
-# 创建输出目录（如果不存在）
+# 创建输出目录
 if not os.path.exists(merged_output_dir):
     os.makedirs(merged_output_dir)
 
@@ -20,7 +20,7 @@ frame_width = int(cap.get(3))
 frame_height = int(cap.get(4))
 
 # 定义编解码器
-fourcc = cv2.VideoWriter_fourcc(*'XVID')
+fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
 out = None
 
 # 读取第一帧
@@ -71,7 +71,7 @@ while cap.isOpened():
         last_toggle_time = time.time()
         if not recording:
             current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            video_path = os.path.join(merged_output_dir, f"{current_time_filename}.avi")
+            video_path = os.path.join(merged_output_dir, f"{current_time_filename}.mp4")
             out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
             recording = True
             print("开始录制")
