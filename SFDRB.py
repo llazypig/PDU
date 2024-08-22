@@ -3,13 +3,12 @@ import os
 import gpiod
 import time
 from datetime import datetime
-from ffpyplayer.player import MediaPlayer
 
 # 设置输出目录和RTSP URL
-merged_output_dir = '/home/monster/Desktop/share/DCIM/hc/'
+merged_output_dir = '/home/monster/Desktop/share/DCIM/hcz/'
 rtmp_url = 'rtsp://admin:tfe123456@10.168.1.66/media/video1/multicast'
 
-# 创建输出目录
+# 创建输出目录（如果不存在）
 if not os.path.exists(merged_output_dir):
     os.makedirs(merged_output_dir)
 
@@ -42,19 +41,6 @@ line.request(consumer="record_toggle", type=gpiod.LINE_REQ_DIR_IN)
 
 last_toggle_time = 0
 
-def merge_audio_video(video_file, audio_file, output_dir):
-    current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    output_file = os.path.join(output_dir, f"{current_time_filename}.mp4")
-    video_clip = VideoFileClip(video_file)
-    audio_clip = AudioFileClip(audio_file)
-    final_clip = video_clip.set_audio(audio_clip)
-    final_clip.write_videofile(output_file, codec='libx264', audio_codec='aac')
-    print(f"合并后的文件已保存到: {output_file}")
-
-def get_audio_frame(player):
-    audio_frame, val = player.get_frame()
-    return audio_frame, val
-
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
@@ -70,7 +56,7 @@ while cap.isOpened():
     # 计算变化的像素数量
     change = cv2.countNonZero(thresh)
 
-    # 如果变化超过一定阈值，则认为有变化
+    # 如果变化超过一定阈值，并且处于录制状态，则保存当前帧
     if change > 5000 and recording:
         out.write(frame)
 
@@ -80,8 +66,8 @@ while cap.isOpened():
     # 显示当前帧
     cv2.imshow('frame', frame)
 
-    # 检测GPIO高电平
-    if line.get_value() == 1 and (time.time() - last_toggle_time) > lockout_time:
+    # 检测GPIO低电平
+    if line.get_value() == 0 and (time.time() - last_toggle_time) > lockout_time:
         last_toggle_time = time.time()
         if not recording:
             current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
