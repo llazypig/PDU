@@ -9,7 +9,7 @@ from ffpyplayer.player import MediaPlayer
 merged_output_dir = '/home/monster/Desktop/share/DCIM/hc/'
 rtmp_url = 'rtsp://admin:tfe123456@10.168.1.66/media/video1/multicast'
 
-# 创建输出目录（如果不存在）
+# 创建输出目录
 if not os.path.exists(merged_output_dir):
     os.makedirs(merged_output_dir)
 
@@ -32,7 +32,7 @@ recording = False
 
 # GPIO配置
 chip_name = "gpiochip6"
-line_offset = 0  # GPIO6_A0 (IO1)
+line_offset = 1  # GPIO6_A1 (IO2)
 debounce_time = 0.05  # 去抖动时间（秒）
 lockout_time = 1  # 状态锁定时间（秒）
 
