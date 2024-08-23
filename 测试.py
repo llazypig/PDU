@@ -27,19 +27,26 @@ os.makedirs(recording_output_dir, exist_ok=True)
 os.makedirs(merged_output_dir, exist_ok=True)
 
 def open_container_and_streams(rtmp_url):
-    container = av.open(rtmp_url)
-    video_stream = next((s for s in container.streams if s.type == 'video'), None)
-    audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+    """打开RTSP流并获取视频和音频流。"""
+    try:
+        container = av.open(rtmp_url)
+        video_stream = next((s for s in container.streams if s.type == 'video'), None)
+        audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
 
-    if video_stream is None or audio_stream is None:
-        raise ValueError("No video or audio stream found in the container.")
+        if video_stream is None or audio_stream is None:
+            raise ValueError("No video or audio stream found in the container.")
 
-    return container, video_stream, audio_stream
+        return container, video_stream, audio_stream
+    except av.AVError as e:
+        print(f"Error opening container: {e}")
+        return None, None, None
 
 def initialize_audio_player(audio_stream):
+    """初始化音频播放器。"""
     return MediaPlayer(rtmp_url, ff_opts={'vn': True})  # `vn`: video disabled, only audio
 
 def start_recording_video_and_audio():
+    """开始录制视频和音频。"""
     # 初始化GPIO
     chip = gpiod.Chip(chip_name)
     line = chip.get_line(line_offset)
@@ -57,79 +64,89 @@ def start_recording_video_and_audio():
     fourcc = cv2.VideoWriter_fourcc(*'avc1')  # 使用兼容性更好的编解码器标签
     frame_rate = 25
 
-    try:
-        container, video_stream, audio_stream = open_container_and_streams(rtmp_url)
-        audio_player = initialize_audio_player(audio_stream)
+    while True:
+        if not recording:
+            # 如果没有录制，则重新打开RTSP流
+            container, video_stream, audio_stream = open_container_and_streams(rtmp_url)
+            if container is None:
+                print("无法打开RTSP流，重试中...")
+                time.sleep(1)  # 暂停1秒钟，然后重试
+                continue
+            audio_player = initialize_audio_player(audio_stream)
+
         wave_file = None  # 在启动录制时初始化音频文件
 
-        for packet in container.demux(video_stream, audio_stream):
-            try:
-                # GPIO 低电平（0）检测
-                current_state = line.get_value()
-                if current_state == 0 and last_state == 1:
-                    current_time = time.time()
-                    if current_time - last_change_time > debounce_time:
-                        recording = not recording
-                        last_change_time = current_time
+        try:
+            for packet in container.demux(video_stream, audio_stream):
+                try:
+                    # GPIO 低电平（0）检测
+                    current_state = line.get_value()
+                    if current_state == 0 and last_state == 1:
+                        current_time = time.time()
+                        if current_time - last_change_time > debounce_time:
+                            recording = not recording
+                            last_change_time = current_time
 
-                        if recording:
-                            print("录制已开始")
-                            # 初始化音频文件
-                            wave_file = wave.open(audio_output_file, 'wb')
-                            wave_file.setnchannels(1)
-                            wave_file.setsampwidth(2)  # 16-bit samples
-                            wave_file.setframerate(16000)  # 使用原始采样率16kHz
-                        else:
-                            if video_writer is not None:
-                                video_writer.release()
-                                video_writer = None
+                            if recording:
+                                print("录制已开始")
+                                # 初始化音频文件
+                                wave_file = wave.open(audio_output_file, 'wb')
+                                wave_file.setnchannels(1)
+                                wave_file.setsampwidth(2)  # 16-bit samples
+                                wave_file.setframerate(16000)  # 使用原始采样率16kHz
+                            else:
+                                if video_writer is not None:
+                                    video_writer.release()
+                                    video_writer = None
+                                if wave_file is not None:
+                                    wave_file.close()  # 停止音频录制
+                                    wave_file = None
+                                    print(f"录制已停止，视频已保存到 {video_output_file}")
+                                    print(f"音频已保存到 {audio_output_file}")
+
+                                    # 合成音视频并保存到指定目录
+                                    merge_audio_video(video_output_file, audio_output_file, merged_output_dir)
+
+                                    # 关闭容器并重置以防止缓冲区问题
+                                    if container is not None:
+                                        container.close()
+                                        container = None
+                                    break  # 跳出for循环以重新初始化
+
+                    last_state = current_state
+
+                    if recording and packet.stream.type == 'video':
+                        for frame in packet.decode():
+                            img = frame.to_ndarray(format='bgr24')
+
+                            if video_writer is None:
+                                video_writer = cv2.VideoWriter(video_output_file, fourcc, frame_rate, (img.shape[1], img.shape[0]))
+                            video_writer.write(img)
+
+                    elif recording and packet.stream.type == 'audio':
+                        for frame in packet.decode():
+                            audio_data = frame.to_ndarray().astype(np.int16)
+                            audio_player.get_frame()  # 同步播放音频
                             if wave_file is not None:
-                                wave_file.close()  # 停止音频录制
-                                wave_file = None
-                                print(f"录制已停止，视频已保存到 {video_output_file}")
-                                print(f"音频已保存到 {audio_output_file}")
+                                wave_file.writeframes(audio_data.tobytes())
 
-                                # 合成音视频并保存到指定目录
-                                merge_audio_video(video_output_file, audio_output_file, merged_output_dir)
+                    # 按'q'键退出程序
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        print("程序已退出")
+                        return  # 直接退出函数
 
-                                # 清除旧的容器和流，确保不使用上一次的缓冲区
-                                if container is not None:
-                                    container.close()
-                                container, video_stream, audio_stream = open_container_and_streams(rtmp_url)
-                                audio_player = initialize_audio_player(audio_stream)
+                except av.AVError as e:
+                    print(f"Error decoding packet: {e}")
+                    break  # 发生解码错误时跳出循环重新初始化
 
-                last_state = current_state
-
-                if recording and packet.stream.type == 'video':
-                    for frame in packet.decode():
-                        img = frame.to_ndarray(format='bgr24')
-
-                        if video_writer is None:
-                            video_writer = cv2.VideoWriter(video_output_file, fourcc, frame_rate, (img.shape[1], img.shape[0]))
-                        video_writer.write(img)
-
-                elif recording and packet.stream.type == 'audio':
-                    for frame in packet.decode():
-                        audio_data = frame.to_ndarray().astype(np.int16)
-                        audio_player.get_frame()  # 同步播放音频
-                        if wave_file is not None:
-                            wave_file.writeframes(audio_data.tobytes())
-
-                # 按'q'键退出程序
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    print("程序已退出")
-                    break
-
-            except av.AVError as e:
-                print(f"Error decoding packet: {e}")
-
-    finally:
-        if video_writer is not None:
-            video_writer.release()
-        if container is not None:
-            container.close()
+        finally:
+            if video_writer is not None:
+                video_writer.release()
+            if container is not None:
+                container.close()
 
 def merge_audio_video(video_file, audio_file, output_dir):
+    """合并音频和视频文件。"""
     # 获取当前时间，并格式化为文件名
     current_time_str = datetime.now().strftime("%Y-%m-%d %H\\:%M\\:%S")
     current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
