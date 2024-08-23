@@ -51,6 +51,7 @@ def start_recording_video_and_audio():
     last_change_time = time.time() - lockout_time
     recording = False
     video_writer = None
+    container = None
     video_output_file = os.path.join(recording_output_dir, 'output_video.mp4')
     audio_output_file = os.path.join(recording_output_dir, 'output_audio.wav')
     fourcc = cv2.VideoWriter_fourcc(*'avc1')  # 使用兼容性更好的编解码器标签
@@ -91,6 +92,12 @@ def start_recording_video_and_audio():
                                 # 合成音视频并保存到指定目录
                                 merge_audio_video(video_output_file, audio_output_file, merged_output_dir)
 
+                                # 清除旧的容器和流，确保不使用上一次的缓冲区
+                                if container is not None:
+                                    container.close()
+                                container, video_stream, audio_stream = open_container_and_streams(rtmp_url)
+                                audio_player = initialize_audio_player(audio_stream)
+
                 last_state = current_state
 
                 if recording and packet.stream.type == 'video':
@@ -119,7 +126,7 @@ def start_recording_video_and_audio():
     finally:
         if video_writer is not None:
             video_writer.release()
-        if 'container' in locals():
+        if container is not None:
             container.close()
 
 def merge_audio_video(video_file, audio_file, output_dir):
