@@ -1,63 +1,50 @@
 import gpiod
 import time
-import subprocess
 import os
-import signal
+import subprocess
 
-# GPIO配置
+# 配置 GPIO
 chip_name = "gpiochip6"
-line_offset = 0  # GPIO6_A0 (IO1)
-debounce_time = 0.05  # 去抖时间（秒）
+line_offset = 0
+debounce_time = 0.05
 
-# 用于运行 '1.py' 的进程
-process = None
+# 初始化 GPIO 芯片和线
+chip = gpiod.Chip(chip_name)
+line = chip.get_line(line_offset)
+line.request(consumer="gpio_control", type=gpiod.LINE_REQ_DIR_IN)
 
-def start_script():
-    """启动脚本 '1.py'。"""
-    global process
-    if process is None or process.poll() is not None:  # 检查进程是否未运行
-        print("启动 1.py...")
-        process = subprocess.Popen(["python3", "/usr/TFE/my_env/hc/1.py"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+# 记录低电平检测次数
+low_count = 0
 
-def stop_script():
-    """停止脚本 '1.py'。"""
-    global process
-    if process is not None and process.poll() is None:  # 检查进程是否正在运行
-        print("停止 1.py...")
-        process.send_signal(signal.SIGTERM)  # 发送SIGTERM信号，平稳终止进程
-        process.wait()  # 等待进程终止
-        process = None
+def send_stop_signal():
+    with open("stop_signal.txt", "w") as f:
+        f.write("stop")
+    print("停止信号已发送")
 
-def monitor_gpio(chip_name, line_offset):
-    """监控GPIO信号以控制 '1.py' 的启动和停止。"""
-    global process
-    chip = gpiod.Chip(chip_name)
-    line = chip.get_line(line_offset)
-    
-    # 将GPIO线路请求为输入
-    line.request(consumer="gpio_control", type=gpiod.LINE_REQ_DIR_IN)
-    
-    last_value = line.get_value()
-    print("正在监控GPIO的变化...")
-    
+try:
     while True:
+        # 读取 GPIO 线的电平
         value = line.get_value()
         
-        if value != last_value:  # 如果值发生变化
-            if value == 1:
-                start_script()
-            else:
-                stop_script()
-                
-            last_value = value
-            time.sleep(debounce_time)  # 去抖动延迟
+        if value == 0:  # 检测到低电平
+            low_count += 1
+            print(f"检测到低电平次数: {low_count}")
+            time.sleep(debounce_time) 
 
-        time.sleep(0.01)  # 轮询延迟以避免高CPU占用
+            if low_count == 1:
+                subprocess.Popen(["python3", "1.py"])
+                print("1.py 已启动")
+                # 添加延迟，确保按钮释放后再继续检测
+                time.sleep(1)
+            elif low_count == 2:
+                send_stop_signal()
+                break
 
-if __name__ == "__main__":
-    try:
-        monitor_gpio(chip_name, line_offset)
-    except KeyboardInterrupt:
-        print("用户中断。正在退出...")
-        if process is not None:
-            stop_script()
+        time.sleep(0.1)  # 稍作延迟
+
+except KeyboardInterrupt:
+    print("程序被手动中断")
+
+finally:
+    line.release()
+    chip.close()
