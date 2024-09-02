@@ -1,116 +1,96 @@
-import ffmpeg 
+import gi
+gi.require_version('Gst', '1.0')
+from gi.repository import Gst, GLib
 import threading
 import time
 import os
-import uuid 
+import uuid
 import logging
-from datetime import datetime 
+from datetime import datetime
 
-# 配置日志记录到文件
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename='/media/monster/数据/logfile.log', 
-    filemode='w'  
-)
+# 初始化 GStreamer
+Gst.init(None)
 
-# 定义RTSP URL
+# 配置日志记录
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# 定义 RTSP URL
 rtsp_url_1 = "rtsp://admin:tfe123456@10.168.1.66/media/video1"
 rtsp_url_2 = "rtsp://admin:tfe123456@10.168.1.67/media/video1"
 
-# 获取设备的MAC地址并格式化
+# 获取设备的 MAC 地址并格式化
 mac_address = uuid.UUID(int=uuid.getnode()).hex[-12:]
-mac_folder = f"/media/monster/数据/sp/{mac_address}" 
+mac_folder = f"/home/monster/Desktop/share/DCIM/sp/{mac_address}"
 
-# 用于信号终止的事件
+# 终止信号
 terminate_event = threading.Event()
 
-def record_stream(rtsp_url, output_path):
-    try:
-        process = (
-            ffmpeg
-            .input(rtsp_url, rtsp_flags='prefer_tcp', stimeout='5000000', buffer_size='2000000')  # 设置连接和缓冲区
-            .output(output_path, vcodec='copy', acodec='aac', audio_bitrate='128k', format='mp4')
-            .global_args('-y', '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2')  # 强制保持连接
-            .run_async(pipe_stdin=True, pipe_stderr=True)
+def create_pipeline(rtsp_url, output_path, video_only=False):
+    """
+    创建一个 GStreamer 管道，用于将 RTSP 流录制到 MP4 文件。
+    """
+    if video_only:
+        # 仅视频管道
+        pipeline_str = (
+            f"rtspsrc location={rtsp_url} ! rtph264depay ! h264parse ! "
+            f"mp4mux name=mux ! filesink location={output_path}"
+        )
+    else:
+        # 视频和音频管道，使用 voaacenc 进行音频编码
+        pipeline_str = (
+            f"rtspsrc location={rtsp_url} ! rtph264depay ! h264parse ! mux. "
+            f"rtspsrc location={rtsp_url} ! decodebin name=d "
+            f"d. ! audioconvert ! voaacenc ! aacparse ! mux. "
+            f"mp4mux name=mux ! filesink location={output_path}"
         )
 
-        logging.info(f"正在录制视频和音频到 {output_path} ...")
+    return pipeline_str
 
-        while not terminate_event.is_set():
-            if process.poll() is not None:
-                logging.error(f"FFmpeg意外退出，停止录制: {output_path}")
-                stderr = process.stderr.read().decode()
-                logging.debug(f"FFmpeg 错误信息: {stderr}")
-                return
-            time.sleep(1)
+def record_stream(rtsp_url, output_path, video_only=False):
+    """
+    开始录制流的函数。
+    """
+    pipeline_str = create_pipeline(rtsp_url, output_path, video_only)
+    pipeline = Gst.parse_launch(pipeline_str)
 
-        logging.info("停止录制...")
-        process.stdin.write(b'q')  
-        process.stdin.close() 
-        process.wait()  # 等待 FFmpeg 完全结束
+    loop = GLib.MainLoop()
+    bus = pipeline.get_bus()
+    bus.add_signal_watch()
 
-    except Exception as e:
-        logging.error(f"录制过程中出错: {e}")
-        if process:
-            stderr = process.stderr.read().decode()
-            logging.debug(f"FFmpeg 错误信息: {stderr}")
+    def on_message(bus, message):
+        t = message.type
+        if t == Gst.MessageType.EOS:
+            logging.info("流结束")
+            loop.quit()
+        elif t == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            logging.error(f"错误: {err}, {debug}")
+            loop.quit()
 
-        # 确保进程被终止
-        if process and process.poll() is None:
-            process.terminate()
-            process.wait()
-        logging.info(f"FFmpeg已被终止: {output_path}")
+    bus.connect("message", on_message)
 
-    finally:
-        if process:
-            process.kill()  # 强制杀死进程
-            logging.info(f"FFmpeg进程已被强制终止: {output_path}")
-
-def record_video(rtsp_url, output_path):
     try:
-        process = (
-            ffmpeg
-            .input(rtsp_url, rtsp_flags='prefer_tcp', stimeout='5000000', buffer_size='2000000')  # 连接和缓冲区
-            .output(output_path, vcodec='copy', an=None, format='mp4')
-            .global_args('-y', '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2')  # 强制保持连接
-            .run_async(pipe_stdin=True, pipe_stderr=True)
-        )
-
-        logging.info(f"正在录制视频到 {output_path} ...")
+        pipeline.set_state(Gst.State.PLAYING)
+        logging.info(f"录制开始: {output_path}")
 
         while not terminate_event.is_set():
-            if process.poll() is not None:
-                logging.error(f"FFmpeg意外退出，停止录制: {output_path}")
-                stderr = process.stderr.read().decode()
-                logging.debug(f"FFmpeg 错误信息: {stderr}")
-                return
             time.sleep(1)
 
-        logging.info("停止录制...")
-        process.stdin.write(b'q') 
-        process.stdin.close() 
-        process.wait()  # 等待 FFmpeg 完全结束
+        logging.info("终止管道...")
+        pipeline.send_event(Gst.Event.new_eos())  # 发送 EOS 事件以完成文件写入
 
+        loop.run()
     except Exception as e:
-        logging.error(f"录制过程中出错: {e}")
-        if process:
-            stderr = process.stderr.read().decode()
-            logging.debug(f"FFmpeg 错误信息: {stderr}")
-
-        # 确保进程被终止
-        if process and process.poll() is None:
-            process.terminate()
-            process.wait()
-        logging.info(f"FFmpeg进程已被终止: {output_path}")
-
+        logging.error(f"录制期间出错: {e}")
     finally:
-        if process:
-            process.kill()  # 强制杀死进程
-            logging.info(f"FFmpeg终止: {output_path}")
+        pipeline.set_state(Gst.State.NULL)
+
+def stop_recording():
+    terminate_event.set()
+    logging.info("收到停止信号")
 
 if __name__ == '__main__':
-    # 创建基于MAC地址的目录结构
+    # 根据 MAC 地址创建目录结构
     os.makedirs(mac_folder, exist_ok=True)
     rtspurl1_path = os.path.join(mac_folder, "rtspurl1")
     rtspurl2_path = os.path.join(mac_folder, "rtspurl2")
@@ -120,13 +100,13 @@ if __name__ == '__main__':
     # 获取当前时间并格式化为字符串
     current_time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    # 定义输出路径，包含时间戳
+    # 定义包含时间戳的输出路径
     output_path_1 = os.path.join(rtspurl1_path, f"{current_time_str}_camera1.mp4")
     output_path_2 = os.path.join(rtspurl2_path, f"{current_time_str}_camera2.mp4")
 
     # 启动录制线程
     recording_thread_1 = threading.Thread(target=record_stream, args=(rtsp_url_1, output_path_1))
-    recording_thread_2 = threading.Thread(target=record_video, args=(rtsp_url_2, output_path_2))
+    recording_thread_2 = threading.Thread(target=record_stream, args=(rtsp_url_2, output_path_2, True))
 
     recording_thread_1.start()
     recording_thread_2.start()
@@ -134,21 +114,21 @@ if __name__ == '__main__':
     try:
         while True:
             if os.path.exists("stop_signal.txt"):
-                logging.info("收到关闭信号，正在终止录制...")
-                terminate_event.set()
+                logging.info("检测到停止信号文件，停止录制...")
+                stop_recording()
                 break
             time.sleep(1)
     except Exception as e:
-        logging.error(f"发生错误: {e}")
+        logging.error(f"主循环期间出错: {e}")
+    finally:
+        # 等待线程结束
+        recording_thread_1.join()
+        recording_thread_2.join()
+        logging.info("录制停止。文件保存于:")
+        logging.info(output_path_1)
+        logging.info(output_path_2)
 
-    # 等待线程结束
-    recording_thread_1.join()
-    recording_thread_2.join()
-    logging.info("录制已终止，文件保存在以下路径：")
-    logging.info(output_path_1)
-    logging.info(output_path_2)
-
-    # 删除停止信号文件
-    if os.path.exists("stop_signal.txt"):
-        os.remove("stop_signal.txt")
-        logging.info("停止信号文件已删除")
+        # 删除停止信号文件
+        if os.path.exists("stop_signal.txt"):
+            os.remove("stop_signal.txt")
+            logging.info("停止信号文件已删除")
