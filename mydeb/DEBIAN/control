@@ -1,8 +1,0 @@
-Package: mypackage
-Version: 1.0
-Section: base
-Priority: optional
-Architecture: arm64
-Depends: python3
-Maintainer: Your Name <your.email@example.com>
-Description: 包含1.py、hd.py和oss.py的Debian包
