@@ -3,8 +3,6 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import subprocess
 import os
-import signal
-import time
 import json
 
 app = Flask(__name__)
@@ -19,13 +17,15 @@ def start_stream():
     username = data.get('username')
     password = data.get('password')
     ip = data.get('ip')
+    camera_group = data.get('camera_group')  # 获取第几组摄像头的信息
 
-    if not username or not password or not ip:
+    if not username or not password or not ip or not camera_group:
         return jsonify({"error": "无效的输入数据"}), 400
 
     try:
+        # 将用户名、密码、IP地址和摄像头组号写入data.txt文件
         with open('/usr/TFE/my_env/fl/data.txt', 'w') as file:
-            file.write(f"{username}\n{password}\n{ip}\n")
+            file.write(f"{username}\n{password}\n{ip}\n{camera_group}\n")  # 第四行是第几组摄像头
         return jsonify({"message": "数据已写入"}), 200
     except Exception as e:
         return jsonify({"error": "写入数据文件失败"}), 500
@@ -35,11 +35,11 @@ def start_recording():
     try:
         with open(recording_status_file, 'w') as f:
             json.dump({"recording": True}, f)
-        
+
         process = subprocess.Popen(['python3', '/usr/TFE/my_env/fl/1.py'])
         with open(pid_file, 'w') as f:
             f.write(str(process.pid))
-        
+
         return jsonify({"message": "视频流已启动，开始录制"}), 200
     except Exception as e:
         return jsonify({"error": f"启动视频流失败: {e}"}), 500
@@ -50,7 +50,6 @@ def stop_recording():
         with open(recording_status_file, 'w') as f:
             json.dump({"recording": False}, f)
 
-        time.sleep(2)  # 等待视频文件保存完成
         if os.path.exists(pid_file):
             with open(pid_file, 'r') as f:
                 pid = int(f.read().strip())
