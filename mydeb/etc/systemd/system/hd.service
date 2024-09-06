@@ -1,0 +1,11 @@
+[Unit]
+Description=HD Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/hd
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+

@@ -1,0 +1,10 @@
+[Unit]
+Description=OSS Service
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/oss
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
