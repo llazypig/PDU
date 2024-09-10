@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>视频流输入</title>
+</head>
+<body>
+    <form id="streamForm">
+        <label for="username">用户名:</label>
+        <input type="text" id="username" required pattern="^[a-zA-Z0-9_]+$" title="仅允许字母、数字和下划线"><br>
+
+        <label for="password">密码:</label>
+        <input type="password" id="password" required pattern=".{6,}" title="密码至少6位"><br>
+
+        <label for="ip">IP地址:</label>
+        <input type="text" id="ip" required><br>
+
+        <label for="camera_group">第几组摄像头:</label>
+        <input type="number" id="camera_group" required><br>
+
+        <label for="record_duration">录制时长(秒):</label>
+        <input type="number" id="record_duration" required value="120"><br>
+
+        <label for="record_size">最小录制文件大小(MB):</label>
+        <input type="number" id="record_size" required value="20"><br>
+
+        <label for="frame_threshold">画面变化阈值:</label>
+        <input type="number" id="frame_threshold" required value="5000"><br>
+
+        <label for="output_dir">文件存储路径:</label>
+        <input type="text" id="output_dir" required value="/media/monster/数据/sp/"><br>
+
+        <button type="submit">确认设置并开始流</button>
+    </form>
+
+    <button id="startRecording">开始录制</button>
+    <button id="stopRecording">停止录制</button>
+
+    <script>
+        document.getElementById('streamForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            const data = {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+                ip: document.getElementById('ip').value,
+                camera_group: document.getElementById('camera_group').value,
+                record_duration: document.getElementById('record_duration').value,
+                record_size: document.getElementById('record_size').value,
+                frame_threshold: document.getElementById('frame_threshold').value,
+                output_dir: document.getElementById('output_dir').value,
+            };
+
+            fetch('http://10.168.1.20:5000/start-stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('成功:', data);
+            })
+            .catch((error) => {
+                console.error('错误:', error);
+            });
+        });
+
+        document.getElementById('startRecording').addEventListener('click', function() {
+            fetch('http://10.168.1.20:5000/record/start', {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('开始录制:', data);
+            })
+            .catch((error) => {
+                console.error('错误:', error);
+            });
+        });
+
+        document.getElementById('stopRecording').addEventListener('click', function() {
+            fetch('http://10.168.1.20:5000/record/stop', {
+                method: 'POST',
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('停止录制:', data);
+            })
+            .catch((error) => {
+                console.error('错误:', error);
+            });
+        });
+    </script>
+</body>
+</html>
