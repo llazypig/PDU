@@ -70,7 +70,7 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
     video_path = None
     no_change_start = None
     video_start_time = None
-    start_time = None  # 添加开始录制时间
+    start_time = None  # 记录开始录制的时间
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -86,11 +86,11 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
         prev_gray = gray
 
         if change > frame_threshold:
+            # 画面变化较大，正常录制
             if not recording:
-                # 如果没有正在录制，则开始录制
                 current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 video_path = os.path.join(merged_output_dir, f"{current_time_filename}.mp4")
-                out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
+                out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))  # 正常帧速率录制
                 recording = True
                 video_start_time = time.time()
                 start_time = video_start_time
@@ -98,13 +98,21 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
             out.write(frame)
             no_change_start = None  # 重置无变化时间
         else:
-            if recording and no_change_start is None:
-                # 如果画面没有变化，记录无变化开始时间
-                no_change_start = time.time()
+            # 画面变化较小时，继续以正常帧速率录制
+            if not recording:
+                current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                video_path = os.path.join(merged_output_dir, f"{current_time_filename}_low_change.mp4")
+                out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))  # 仍然以正常帧速率录制
+                recording = True
+                video_start_time = time.time()
+                start_time = video_start_time
+                logging.info(f"开始录制低变化视频：{video_path}")
+            out.write(frame)
+            no_change_start = None  # 重置无变化时间
 
+        # 如果已经在录制，并且画面无变化超过10秒，停止录制
         if recording and no_change_start:
             if (time.time() - no_change_start) >= 10:
-                # 如果无变化超过10秒，停止录制
                 logging.info(f"画面无变化超过10秒，停止写入文件: {video_path}")
                 out.release()
                 if video_path and os.path.getsize(video_path) < record_size * 1024 * 1024:
@@ -115,8 +123,8 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
                 no_change_start = None
                 video_start_time = None
 
+        # 如果录制时长达到用户设置的最大值，保存文件并重新创建新的视频文件
         if recording and (time.time() - video_start_time) >= record_duration:
-            # 如果录制时间达到用户设置的切片时间，保存文件并继续录制
             out.release()
             logging.info(f"录制时间超过用户设置的切片时间，保存文件: {video_path}")
             if video_path and os.path.getsize(video_path) < record_size * 1024 * 1024:
