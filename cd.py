@@ -67,9 +67,9 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
 
     prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
     recording = False
-    start_time = time.time()
     video_path = None
     no_change_start = None
+    video_start_time = None
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -82,51 +82,42 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
         _, thresh = cv2.threshold(diff, 30, 255, cv2.THRESH_BINARY)
         change = cv2.countNonZero(thresh)
 
-        if change > frame_threshold:
-            if recording:
-                out.write(frame)
-            no_change_start = None  # 如果有变化，重置停止计时器
-
         prev_gray = gray
 
-        current_recording = is_recording()
-        if current_recording and not recording:
-            current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            video_path = os.path.join(merged_output_dir, f"{current_time_filename}.mp4")
-            out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
-            recording = True
-            start_time = time.time()
-            logging.info(f"开始录制视频：{video_path}")
-        elif not current_recording and recording:
-            recording = False
-            if out:
-                logging.info("停止录制，正在保存文件...")
-                out.release()
-                out = None
-                logging.info(f"文件 {video_path} 已保存完成")
-            continue  # 停止录制但继续监控
+        if change > frame_threshold:
+            if not recording:
+                # 如果没有正在录制，则开始录制
+                current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                video_path = os.path.join(merged_output_dir, f"{current_time_filename}.mp4")
+                out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
+                recording = True
+                video_start_time = time.time()
+                logging.info(f"开始录制视频：{video_path}")
+            out.write(frame)
+            no_change_start = None  # 重置无变化时间
+        else:
+            if recording and no_change_start is None:
+                # 如果画面没有变化，记录无变化开始时间
+                no_change_start = time.time()
 
-        if recording:
-            if no_change_start is None and change <= frame_threshold:
-                no_change_start = time.time()  # 记录无变化开始的时间
-
-            if no_change_start and (time.time() - no_change_start) >= 10:
+        if recording and no_change_start:
+            if (time.time() - no_change_start) >= 10:
+                # 如果无变化超过10秒，停止录制
                 logging.info(f"画面无变化超过10秒，停止写入文件: {video_path}")
                 out.release()
                 out = None
                 recording = False
-                no_change_start = None  # 重置计时器
+                no_change_start = None
+                video_start_time = None
 
-        if recording and (time.time() - start_time) >= record_duration:
+        if recording and (time.time() - video_start_time) >= record_duration:
+            # 如果录制时间达到用户设置的切片时间，保存文件并继续录制
             out.release()
-            if video_path and os.path.getsize(video_path) < record_size * 1024 * 1024:
-                os.remove(video_path)
-                logging.info(f"文件 {video_path} 被删除，因为它小于{record_size}MB")
-
+            logging.info(f"录制时间超过用户设置的切片时间，保存文件: {video_path}")
             current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             video_path = os.path.join(merged_output_dir, f"{current_time_filename}.mp4")
             out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
-            start_time = time.time()
+            video_start_time = time.time()
             logging.info(f"创建新视频文件：{video_path}")
 
     cap.release()
