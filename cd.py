@@ -70,6 +70,7 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
     video_path = None
     no_change_start = None
     video_start_time = None
+    start_time = None  # 添加开始录制时间
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -92,6 +93,7 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
                 out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
                 recording = True
                 video_start_time = time.time()
+                start_time = video_start_time
                 logging.info(f"开始录制视频：{video_path}")
             out.write(frame)
             no_change_start = None  # 重置无变化时间
@@ -105,6 +107,9 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
                 # 如果无变化超过10秒，停止录制
                 logging.info(f"画面无变化超过10秒，停止写入文件: {video_path}")
                 out.release()
+                if video_path and os.path.getsize(video_path) < record_size * 1024 * 1024:
+                    os.remove(video_path)
+                    logging.info(f"文件 {video_path} 被删除，因为它小于{record_size}MB")
                 out = None
                 recording = False
                 no_change_start = None
@@ -114,6 +119,9 @@ def process_video(cap, frame_width, frame_height, merged_output_dir, rtmp_url, m
             # 如果录制时间达到用户设置的切片时间，保存文件并继续录制
             out.release()
             logging.info(f"录制时间超过用户设置的切片时间，保存文件: {video_path}")
+            if video_path and os.path.getsize(video_path) < record_size * 1024 * 1024:
+                os.remove(video_path)
+                logging.info(f"文件 {video_path} 被删除，因为它小于{record_size}MB")
             current_time_filename = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             video_path = os.path.join(merged_output_dir, f"{current_time_filename}.mp4")
             out = cv2.VideoWriter(video_path, fourcc, 20.0, (frame_width, frame_height))
