@@ -1,46 +1,10 @@
-import cv2
+import cv2 
 from ultralytics import YOLO
 import threading
 import queue
 import time
 import random
 import numpy as np
-
-class VideoCapture:
-    def __init__(self, name):
-        self.cap = cv2.VideoCapture(name)
-        self.q = queue.Queue()
-        t = threading.Thread(target=self._reader)
-        t.daemon = True
-        t.start()
-
-    def _reader(self):
-        while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                break
-            if not self.q.empty():
-                try:
-                    self.q.get_nowait()  # 删除上一个帧（未处理的）
-                except queue.Empty:
-                    pass
-            self.q.put(frame)
-
-    def read(self):
-        return self.q.get()
-
-def create_kalman_filter():
-    """初始化卡尔曼滤波器"""
-    kf = cv2.KalmanFilter(4, 2)
-    kf.measurementMatrix = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], np.float32)
-    kf.transitionMatrix = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [0, 0, 1, 0], [0, 0, 0, 1]], np.float32)
-    kf.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
-    kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.1  # 增加测量噪声，减少抖动
-    return kf
-
-def assign_color():
-    """随机分配颜色给每只老鼠"""
-    return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
 
 def detect_rats(model_path, video_source):
     model = YOLO(model_path)
@@ -143,8 +107,12 @@ def detect_rats(model_path, video_source):
             for rat_id, track_data in rat_tracks.items():
                 track_positions = track_data["positions"]
                 color = track_data["color"]
-                for i in range(1, len(track_positions)):
-                    cv2.line(frame, track_positions[i - 1], track_positions[i], color, 2)
+                if len(track_positions) > 1:  # 确保至少有两个点可以绘制线段
+                    for i in range(1, len(track_positions)):
+                        # 绘制老鼠轨迹
+                        cv2.line(frame, track_positions[i - 1], track_positions[i], color, 2)
+                        # 输出调试信息，检查轨迹
+                        print(f"绘制老鼠轨迹: ID = {rat_id}, 点 {track_positions[i - 1]} -> {track_positions[i]}")
 
             if saving_video and video_writer is not None:
                 video_writer.write(frame)
