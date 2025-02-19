@@ -57,42 +57,40 @@ def start_ffmpeg_recording(rtmp_url, ts_dir):
             time.sleep(10)  # 等待 10 秒后重试
 
 def create_file_list(ts_files, output_list):
-    """ 创建一个文件列表，将所有 .ts 文件写入指定的输出列表文件中 """
     with open(output_list, 'w') as f:
         for ts_file in ts_files:
-            f.write(f"file '{ts_file}'\n")  # 将每个 .ts 文件路径写入文件
+            f.write(f"file '{ts_file}'\n")
 
 def combine_ts_to_mp4(ts_files, output_dir, record_min_size, camera_id, camera_group):
-    """ 合并 .ts 文件为一个 .mp4 文件，并进行必要的检查和处理 """
     if not ts_files:
-        logging.error("没有可合成的 .ts 文件")  # 如果没有 .ts 文件，记录错误
+        logging.error("没有可合成的 .ts 文件")
         return
 
     # 根据文件名中的时间对 ts_files 进行排序
-    ts_files.sort(key=lambda x: os.path.basename(x).split('.')[0])  # 按时间排序
+    ts_files.sort(key=lambda x: os.path.basename(x).split('.')[0])
 
-    file_list_path = os.path.join(output_dir, 'filelist.txt')  # 创建文件列表路径
+    file_list_path = os.path.join(output_dir, 'filelist.txt')
     
     # 检查文件是否存在
-    missing_files = []  # 用于存储缺失的文件
+    missing_files = []
     for ts_file in ts_files:
         if not os.path.exists(ts_file):
-            #logging.error(f"文件不存在: {ts_file}")  # 如果文件不存在，记录错误
-            missing_files.append(ts_file)  # 添加到缺失文件列表
+            #logging.error(f"文件不存在: {ts_file}")
+            missing_files.append(ts_file)
 
     # 如果有缺失的文件，重新记录 ts_deposit
     if missing_files:
-        logging.info("重新记录 ts_deposit 中的文件")  # 记录信息
+        logging.info("重新记录 ts_deposit 中的文件")
         ts_deposit_dir = os.path.join(output_dir, 'ts_deposit')  # 指定 ts_deposit 目录
         ts_files = get_ts_files(ts_deposit_dir)  # 使用 ts_deposit 目录获取 ts 文件
         if not ts_files:
-            logging.error("没有可用的 .ts 文件进行合成")  # 如果没有可用的文件，记录错误
+            logging.error("没有可用的 .ts 文件进行合成")
             return
 
     with open(file_list_path, 'w') as f:
         for ts_file in ts_files:
-            f.write(f"file '{ts_file}'\n")  # 将可用的 .ts 文件路径写入文件
-            #logging.info(f"写入文件路径到 filelist.txt: {ts_file}")  # 记录写入信息
+            f.write(f"file '{ts_file}'\n")
+            #logging.info(f"写入文件路径到 filelist.txt: {ts_file}")
 
     # 使用第一个 .ts 文件的时间作为 .mp4 文件名
     first_ts_file_time = os.path.basename(ts_files[0]).split('.')[0]
@@ -194,7 +192,7 @@ def log_and_remove_file(file_path, reason):
 #开门关门判断逻辑
 def detect_and_move_changes(ts_files, ts_deposit_dir, ts_jzj_dir, threshold=30, screen_change_threshold=1):
     change_files = []
-    points = [[904, 55], [1175, 47], [1193, 780], [949, 819]]  # 请替换为实际的点坐标
+    points = [[841, 54], [1102, 57], [1112, 783], [873, 872]]  # 请替换为实际的点坐标
     cache = []  # 用于缓存 .ts 文件
 
     # 获取基准文件
@@ -222,6 +220,11 @@ def detect_and_move_changes(ts_files, ts_deposit_dir, ts_jzj_dir, threshold=30, 
         # 提取门的区域并转换为灰度图像
         door_frame_base = frame_base[y:y+h, x:x+w]
         door_gray_base = cv2.cvtColor(door_frame_base, cv2.COLOR_BGR2GRAY)
+        
+        # 使用高斯滤波来减少光照噪声(待测试)
+        door_gray_base = cv2.GaussianBlur(door_gray_base, (5, 5), 0)
+        
+        # 计算边缘，使用自适应阈值
         edges_base = cv2.Canny(door_gray_base, 50, 150)
         initial_edges = cv2.countNonZero(edges_base)
 
@@ -236,6 +239,11 @@ def detect_and_move_changes(ts_files, ts_deposit_dir, ts_jzj_dir, threshold=30, 
             # 提取门的区域并转换为灰度图像
             door_frame = frame[y:y+h, x:x+w]
             door_gray = cv2.cvtColor(door_frame, cv2.COLOR_BGR2GRAY)
+            
+            # 使用高斯滤波减少光照噪声(待测试)
+            door_gray = cv2.GaussianBlur(door_gray, (5, 5), 0)
+            
+            # 计算边缘，使用自适应阈值来适应不同的光照条件
             edges = cv2.Canny(door_gray, 50, 150)
             num_edges = cv2.countNonZero(edges)
 
@@ -302,14 +310,18 @@ def process_video(rtmp_url, merged_output_dir, screen_change_threshold, record_d
     collected_changes = []  # 存储检测到变化的文件
     no_change_count = 0  # 计数连续没有变化的文件
 
+    # 无限循环，持续监测 ts 文件变化
     while True:
         try:
+            # 获取当前 ts 文件列表
             ts_files = get_ts_files(ts_files_dir)
 
+            # 确保至少有两个 ts 文件
             while len(ts_files) < 2:
                 time.sleep(1)
                 ts_files = get_ts_files(ts_files_dir)
 
+            # 检测并移动变化的 ts 文件
             ts_files_with_changes = detect_and_move_changes(ts_files, ts_deposit_dir, ts_jzj_dir, threshold=30, screen_change_threshold=screen_change_threshold)
             
             if ts_files_with_changes:
@@ -322,11 +334,13 @@ def process_video(rtmp_url, merged_output_dir, screen_change_threshold, record_d
             if len(collected_changes) >= record_duration:
                 combine_ts_to_mp4(collected_changes[:record_duration], merged_output_dir, record_min_size, camera_id, camera_group)
                 collected_changes = collected_changes[record_duration:]  # 移除已合并的文件
-            elif no_change_count >= 15:
-                # 如果连续15个文件没有变化，删除 ts_deposit 下的文件
+            elif no_change_count >= 5:
+                # 如果连续5个文件没有变化，清空 collected_changes
+                collected_changes.clear()
+                # 删除 ts_deposit 下的文件
                 ts_deposit_files = get_ts_files(ts_deposit_dir)
                 for ts_file in ts_deposit_files:
-                    log_and_remove_file(ts_file, "连续15个文件没有变化，删除")
+                    log_and_remove_file(ts_file, "连续5个文件没有变化，删除")
                 no_change_count = 0  # 重置计数器
 
             time.sleep(2)
@@ -357,20 +371,37 @@ def clear_directory_if_exists(directory_path):
             except Exception as e:
                 logging.error(f'删除 {file_path} 失败: {e}')
 
+# 处理摄像头流的函数
 def process_camera_stream(camera_id):
     try:
+        # 打开配置文件并读取内容
         with open(config_file, 'r') as file:
             config = json.load(file)
+            # 查找与给定 camera_id 匹配的配置数据
             config_data = next((item for item in config["config"] if item["cameraId"] == camera_id), None)
             if config_data:
+                # 从配置数据中提取用户名、密码、IP 地址和摄像头组
                 userName = config_data['userName']
                 password = config_data['password']
                 ip_address = config_data['ip']
                 camera_group = config_data['cameraId']
+                # 获取屏幕变化阈值、录制持续时间和最小录制文件大小
                 screen_change_threshold = int(config_data['screenChangeThreshold'])
                 record_duration = int(config_data['recordDuration'])
                 record_min_size = int(config_data['recordMinSize']) * 1024  # kb
                 output_dir = '/userdata/'
+
+                # 读取坐标配置
+                with open('/usr/local/bin/coordinate.json', 'r') as coord_file:
+                    coord_config = json.load(coord_file)
+                    # 查找与 IP 地址匹配的坐标
+                    coordinates = next((item[ip_address] for item in coord_config["config"] if ip_address in item), None)
+                    if coordinates:
+                        # 解析坐标字符串为列表
+                        points = eval(coordinates)
+                    else:
+                        logging.error(f"未找到 IP 地址 {ip_address} 的坐标配置")
+                        return
 
                 merged_output_dir, rtmp_url = set_output_dir_and_url(userName, password, ip_address, camera_group, output_dir)
 
